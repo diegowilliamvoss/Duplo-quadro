@@ -145,28 +145,37 @@ button:focus-visible{outline:2px solid var(--frame);outline-offset:3px}
 <script type="module">
 const MP = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 const MODEL = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite";
+const FACE_MODEL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite";
 
 const $ = id => document.getElementById(id);
 const video = $("cam"), overlay = $("overlay"), octx = overlay.getContext("2d");
 const vcanvas = $("vcanvas"), vctx = vcanvas.getContext("2d");
+const dcanvas = document.createElement("canvas"), dctx = dcanvas.getContext("2d", { willReadFrequently:true });
 const chipTxt = $("chipTxt");
 
 let stream = null, facing = "environment";
-let detector = null, follow = true, locked = false;
-let cx = 0, target = 0, trackCx = null, trackBox = null, lastSeen = 0, lastDet = 0, people = [];
-let recording = false, recs = null, t0 = 0, timerId = null, wakeLock = null;
+let personDet = null, faceDet = null, detector = null, follow = true, locked = false;
+let cx = 0, target = 0, trackCx = null, trackBox = null, lastSeen = 0, people = [], lastFrameT = 0;
+let recording = false, recs = null, t0 = 0, timerId = null, wakeLock = null, audioCtx = null;
 let outputs = {};
 
-/* ---------- IA: detector de pessoas ---------- */
+/* ---------- IA: detecta pessoa (corpo) e rosto ---------- */
 async function loadDetector(){
   try{
-    const { FilesetResolver, ObjectDetector } = await import(MP + "/vision_bundle.mjs");
+    const { FilesetResolver, ObjectDetector, FaceDetector } = await import(MP + "/vision_bundle.mjs");
     const vision = await FilesetResolver.forVisionTasks(MP + "/wasm");
-    const opts = d => ({ baseOptions:{ modelAssetPath: MODEL, delegate:d }, runningMode:"VIDEO",
-      scoreThreshold:0.35, maxResults:5, categoryAllowlist:["person"] });
-    try{ detector = await ObjectDetector.createFromOptions(vision, opts("GPU")); }
-    catch{ detector = await ObjectDetector.createFromOptions(vision, opts("CPU")); }
+    const make = async (Cls, o) => {
+      try{ return await Cls.createFromOptions(vision, { ...o, baseOptions:{ ...o.baseOptions, delegate:"GPU" } }); }
+      catch{ return await Cls.createFromOptions(vision, { ...o, baseOptions:{ ...o.baseOptions, delegate:"CPU" } }); }
+    };
+    [personDet, faceDet] = await Promise.all([
+      make(ObjectDetector, { baseOptions:{ modelAssetPath:MODEL }, runningMode:"VIDEO", scoreThreshold:0.3, maxResults:5, categoryAllowlist:["person"] }).catch(() => null),
+      make(FaceDetector, { baseOptions:{ modelAssetPath:FACE_MODEL }, runningMode:"VIDEO", minDetectionConfidence:0.5 }).catch(() => null)
+    ]);
+    if(!personDet && !faceDet) throw new Error("nenhum detector");
+    detector = true;
     setChip("lost","Procurando pessoa");
+    detectLoop();
   }catch(e){
     console.warn(e);
     setChip("", navigator.onLine ? "Reframe indisponível" : "Sem internet no 1º uso");
@@ -174,50 +183,87 @@ async function loadDetector(){
 }
 function setChip(cls, txt){ $("followBtn").dataset.state = cls; chipTxt.textContent = txt; }
 
-function detect(now, cropW){
-  let res;
-  try{ res = detector.detectForVideo(video, now); }catch{ return; }
-  people = res.detections.map(d => { const b = d.boundingBox;
-    return { x:b.originX, y:b.originY, w:b.width, h:b.height, cx:b.originX + b.width/2 }; });
+// roda numa imagem reduzida (rápido) e num ritmo próprio, sem travar o vídeo
+let detTs = 0;
+function runDet(det, isFace, scale){
+  try{
+    const res = det.detectForVideo(dcanvas, detTs = Math.max(detTs + 1, Math.round(performance.now())));
+    return res.detections.map(d => { const b = d.boundingBox;
+      return { x:b.originX*scale, y:b.originY*scale, w:b.width*scale, h:b.height*scale,
+               cx:(b.originX + b.width/2)*scale, face:isFace }; });
+  }catch{ return []; }
+}
+function detectLoop(){
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if(follow && vw && vh && video.readyState >= 2){
+    const dw = 384, dh = Math.round(dw*vh/vw), scale = vw/dw;
+    if(dcanvas.width !== dw || dcanvas.height !== dh){ dcanvas.width = dw; dcanvas.height = dh; }
+    dctx.drawImage(video, 0, 0, dw, dh);
+    // frontal: rosto primeiro; traseira: corpo primeiro. Se não achar, tenta o outro.
+    const order = facing === "user" ? [[faceDet,true],[personDet,false]] : [[personDet,false],[faceDet,true]];
+    let found = [];
+    for(const [det, isFace] of order){ if(det){ found = runDet(det, isFace, scale); if(found.length) break; } }
+    pickTarget(found);
+  }
+  setTimeout(detectLoop, 110);
+}
+function pickTarget(found){
+  people = found;
   const vw = video.videoWidth;
   let pick = null;
   if(people.length){
     if(locked && trackCx !== null){
       pick = people.reduce((a,p) => Math.abs(p.cx-trackCx) < Math.abs(a.cx-trackCx) ? p : a);
-      if(Math.abs(pick.cx - trackCx) > vw*0.22) pick = null; // pessoa escolhida sumiu
+      if(Math.abs(pick.cx - trackCx) > vw*0.25) pick = null; // pessoa escolhida sumiu
     }else{
       pick = people.reduce((a,p) => p.w*p.h > a.w*a.h ? p : a);
     }
   }
   if(pick){
-    lastSeen = now; trackCx = pick.cx; trackBox = pick;
-    if(Math.abs(pick.cx - target) > cropW*0.06) target = pick.cx; // zona morta evita tremedeira
+    lastSeen = performance.now(); trackCx = pick.cx; trackBox = pick;
+    const cw = vcanvas.width || vw*0.32;
+    if(Math.abs(pick.cx - target) > cw*0.04) target = pick.cx; // zona morta pequena evita tremedeira
     setChip("track", locked ? "Seguindo a escolhida" : "Reframe automático");
   }else{
-    trackBox = null;
+    trackBox = null; // mantém o quadro onde a pessoa foi vista por último
     setChip("lost", locked ? "Escolhida fora do quadro" : "Procurando pessoa");
   }
 }
 
-/* ---------- laço de desenho ---------- */
-function loop(){
+/* ---------- vídeo vertical: um quadro por quadro da câmera ---------- */
+function drawVertical(){
   const vw = video.videoWidth, vh = video.videoHeight;
-  if(vw && vh && video.readyState >= 2){
-    let cw = Math.round(vh*9/16/2)*2;
-    if(cw > vw) cw = vw;
-    if(vcanvas.width !== cw || vcanvas.height !== vh){ vcanvas.width = cw; vcanvas.height = vh; }
-    if(!cx){ cx = target = vw/2; }
-    const now = performance.now();
-    if(detector && follow && now - lastDet > 90){ lastDet = now; detect(now, cw); }
-    if(!follow || (now - lastSeen > 2500 && !locked)) target = vw/2;
-    cx += (target - cx) * 0.07;
-    const half = cw/2;
-    cx = Math.min(Math.max(cx, half), vw - half);
-    vctx.drawImage(video, cx-half, 0, cw, vh, 0, 0, cw, vh);
-    drawOverlay(vw, vh, cw);
-  }
-  requestAnimationFrame(loop);
+  if(!vw || !vh || video.readyState < 2) return;
+  let cw = Math.round(vh*9/16/2)*2;
+  if(cw > vw) cw = vw;
+  if(vcanvas.width !== cw || vcanvas.height !== vh){ vcanvas.width = cw; vcanvas.height = vh; }
+  if(!cx){ cx = target = vw/2; }
+  const now = performance.now(), dt = Math.min(0.1, (now - (lastFrameT || now))/1000);
+  lastFrameT = now;
+  if(!follow) target = vw/2;
+  // suavização pelo tempo: segue firme e sem solavanco, mesmo se algum quadro atrasar
+  cx += (target - cx) * (1 - Math.exp(-dt/0.28));
+  const half = cw/2;
+  cx = Math.min(Math.max(cx, half), vw - half);
+  vctx.drawImage(video, cx-half, 0, cw, vh, 0, 0, cw, vh);
 }
+let rvfcId = null, looping = false;
+function frameLoop(){
+  drawVertical();
+  if(video.requestVideoFrameCallback) rvfcId = video.requestVideoFrameCallback(frameLoop);
+  else requestAnimationFrame(frameLoop);
+}
+function restartFrameLoop(){ // ao trocar de câmera a fila de quadros recomeça
+  if(!looping || !video.requestVideoFrameCallback) return;
+  if(rvfcId !== null && video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(rvfcId);
+  rvfcId = video.requestVideoFrameCallback(frameLoop);
+}
+function overlayLoop(){
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if(vw && vh) drawOverlay(vw, vh, vcanvas.width || Math.round(vh*9/16));
+  requestAnimationFrame(overlayLoop);
+}
+function loop(){ looping = true; frameLoop(); overlayLoop(); }
 
 function videoRect(){
   const W = overlay.clientWidth, H = overlay.clientHeight, vw = video.videoWidth, vh = video.videoHeight;
@@ -270,12 +316,13 @@ async function openCamera(){
   if(stream) stream.getTracks().forEach(t => t.stop());
   stream = await navigator.mediaDevices.getUserMedia({
     video:{ facingMode:facing, width:{ideal:1920}, height:{ideal:1080}, frameRate:{ideal:30} },
-    audio:{ echoCancellation:false, noiseSuppression:true }
+    audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:true }
   });
   video.srcObject = stream;
   await video.play().catch(()=>{});
   await new Promise(r => video.videoWidth ? r() : video.addEventListener("loadedmetadata", r, {once:true}));
-  cx = target = video.videoWidth/2; trackCx = null; locked = false;
+  cx = target = video.videoWidth/2; trackCx = null; locked = false; lastFrameT = 0;
+  restartFrameLoop();
   $("camTxt").textContent = facing === "user" ? "Frontal" : "Traseira";
   $("cam").classList.toggle("mirror", facing === "user");
   overlay.classList.toggle("mirror", facing === "user");
@@ -359,9 +406,25 @@ function makeRec(s, bps){
   return { rec, done, stream:s };
 }
 
+// reforça o volume do microfone (com compressor para não estourar)
+function boostedAudio(){
+  const raw = stream.getAudioTracks();
+  if(!raw.length) return [];
+  try{
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx.resume();
+    const src = audioCtx.createMediaStreamSource(new MediaStream(raw));
+    const comp = audioCtx.createDynamicsCompressor();
+    comp.threshold.value = -28; comp.knee.value = 12; comp.ratio.value = 4; comp.attack.value = 0.005; comp.release.value = 0.2;
+    const gain = audioCtx.createGain(); gain.gain.value = 2.4;
+    const dest = audioCtx.createMediaStreamDestination();
+    src.connect(comp); comp.connect(gain); gain.connect(dest);
+    return dest.stream.getAudioTracks();
+  }catch(e){ console.warn("áudio sem reforço", e); return raw; }
+}
 async function startRec(){
   if(!window.MediaRecorder){ alert("Este navegador não grava vídeo."); return; }
-  const audio = stream.getAudioTracks();
+  const audio = boostedAudio();
   const hs = new MediaStream([...stream.getVideoTracks(), ...audio.map(t => t.clone())]);
   const vtrack = vcanvas.captureStream(30).getVideoTracks();
   const vs = new MediaStream([...vtrack, ...audio.map(t => t.clone())]);
@@ -384,6 +447,8 @@ async function stopRec(){
   recs.h.rec.stop(); recs.v.rec.stop();
   const [bh, bv] = await Promise.all([recs.h.done, recs.v.done]);
   [recs.h.stream, recs.v.stream].forEach(s => s.getTracks().forEach(t => { if(!stream.getTracks().includes(t)) t.stop(); }));
+  // desliga câmera e microfone: assim o iPhone toca o som no alto-falante, não no fone de ligação
+  stream.getTracks().forEach(t => t.stop());
   showResults(bh, bv);
 }
 $("recBtn").onclick = () => recording ? stopRec() : startRec();
@@ -449,6 +514,8 @@ $("againBtn").onclick = () => {
     msg.hidden = false; return;
   }
   $("outH").pause(); $("outV").pause(); $("results").hidden = true; checkOrientation();
+  $("recBtn").disabled = true;
+  openCamera().catch(e => { $("results").hidden = false; $("unsaved").textContent = "Não deu para reabrir a câmera (" + e.name + "). Feche e abra o app."; $("unsaved").hidden = false; });
 };
 addEventListener("beforeunload", e => { if(pendentes().length){ e.preventDefault(); e.returnValue = ""; } });
 </script>
