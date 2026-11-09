@@ -166,7 +166,7 @@ const chipTxt = $("chipTxt");
 
 let stream = null, facing = "environment";
 let personDet = null, faceDet = null, detector = null, follow = true, locked = false;
-let cx = 0, target = 0, trackCx = null, trackBox = null, lastSeen = 0, people = [], lastFrameT = 0;
+let cx = 0, vel = 0, subj = null, moving = false, target = 0, trackCx = null, trackBox = null, lastSeen = 0, people = [], lastFrameT = 0;
 let recording = false, recs = null, t0 = 0, timerId = null, wakeLock = null, audioCtx = null;
 let outputs = {};
 // rotação travada: o iPhone entrega a imagem em pé, então o app gira por conta própria
@@ -272,8 +272,8 @@ function pickTarget(found){
   }
   if(pick){
     lastSeen = performance.now(); trackCx = pick.cx; trackBox = pick;
-    const cw = vcanvas.width || vw*0.32;
-    if(Math.abs(pick.cx - target) > cw*0.03) target = pick.cx; // zona morta pequena evita tremedeira
+    // posição da pessoa filtrada: tira a tremedeira da detecção antes de mover a câmera
+    subj = subj === null || Math.abs(pick.cx - subj) > vw*0.3 ? pick.cx : subj + (pick.cx - subj)*0.45;
     setChip("track", locked ? "Fixado · toque p/ auto" : "Reframe automático");
   }else{
     trackBox = null; // mantém o quadro onde a pessoa foi vista por último
@@ -293,13 +293,26 @@ function drawVertical(){
   if(!cx){ cx = target = vw/2; }
   const now = performance.now(), dt = Math.min(0.1, (now - (lastFrameT || now))/1000);
   lastFrameT = now;
-  if(!follow) target = vw/2;
-  // suavização pelo tempo: segue firme e sem solavanco, mesmo se algum quadro atrasar
-  // mais ágil: alcança a pessoa rápido; se ela estiver longe, acelera ainda mais
-  const tau = Math.abs(target - cx) > cw*0.5 ? 0.1 : 0.16;
-  cx += (target - cx) * (1 - Math.exp(-dt/tau));
+  // movimento de câmera: zona de conforto + mola amortecida (acelera e freia suave, sem tranco)
+  if(!follow){ target = vw/2; moving = true; }
+  else if(subj !== null){
+    const off = Math.abs(subj - cx);
+    if(!moving && off > cw*0.12) moving = true;      // só sai do lugar quando a pessoa se afasta do centro
+    if(moving){ target = subj; if(off < cw*0.02 && Math.abs(vel) < cw*0.05) moving = false; }
+  }
+  const far = Math.abs(target - cx) > cw*0.6;
+  const w = far ? 5.5 : 3.6;                          // rigidez: mais alta só quando a pessoa está bem longe
+  const steps = Math.max(1, Math.ceil(dt/0.008));
+  for(let i = 0; i < steps; i++){
+    const h = dt/steps;
+    vel += (w*w*(target - cx) - 2*w*vel) * h;
+    const vmax = cw*(far ? 2.6 : 1.5);                // limite de velocidade por segundo
+    vel = Math.max(-vmax, Math.min(vmax, vel));
+    cx += vel*h;
+  }
   const half = cw/2;
-  cx = Math.min(Math.max(cx, half), vw - half);
+  if(cx < half){ cx = half; if(vel < 0) vel = 0; }
+  if(cx > vw - half){ cx = vw - half; if(vel > 0) vel = 0; }
   vctx.drawImage(S.el, cx-half, 0, cw, vh, 0, 0, cw, vh);
 }
 let rvfcId = null, looping = false;
@@ -377,7 +390,7 @@ async function openCamera(){
   await video.play().catch(()=>{});
   await new Promise(r => video.videoWidth ? r() : video.addEventListener("loadedmetadata", r, {once:true}));
   updateMode();
-  cx = target = srcInfo().w/2; trackCx = null; locked = false; lastFrameT = 0;
+  cx = target = srcInfo().w/2; vel = 0; subj = null; moving = false; trackCx = null; locked = false; lastFrameT = 0;
   restartFrameLoop();
   $("camTxt").textContent = facing === "user" ? "Frontal" : "Traseira";
   $("cam").classList.toggle("mirror", facing === "user");
@@ -444,7 +457,7 @@ overlay.addEventListener("pointerdown", e => {
   const hits = people.filter(p => px >= p.x-pad && px <= p.x+p.w+pad && py >= p.y-pad && py <= p.y+p.h+pad);
   if(!hits.length) return; // toque no vazio não muda nada: sai do fixo só pelo botão
   const hit = hits.reduce((a,p) => Math.abs(p.cx-px) < Math.abs(a.cx-px) ? p : a);
-  locked = true; trackCx = hit.cx; target = hit.cx; lastSeen = performance.now();
+  locked = true; trackCx = hit.cx; subj = hit.cx; target = hit.cx; moving = true; lastSeen = performance.now();
   setChip("track", "Fixado · toque p/ auto");
 });
 
