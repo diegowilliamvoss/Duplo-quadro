@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
 <style>
-/* Visor de câmera escuro: imagem ocupa a tela, trilho de controles à direita, quadro 9:16 em âmbar sobre a imagem */
+/* Visor de câmera: imagem em tela cheia, guia 16:9 branca fina, quadro 9:16 amarelo seguindo a pessoa, controles flutuando */
 :root{
   --bg:#0b0d0c; --panel:rgba(14,16,15,.78); --line:rgba(238,241,236,.16);
   --fg:#eef1ec; --muted:#9aa39c; --frame:#f5c84b; --rec:#ff453a; --ok:#5fd38d;
@@ -24,36 +24,35 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:
 button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
 button:focus-visible{outline:2px solid var(--frame);outline-offset:3px}
 
-#app{position:fixed;inset:0;display:flex}
-#stage{position:relative;flex:1;min-width:0;background:#000;touch-action:manipulation}
+#app{position:fixed;inset:0}
+#stage{position:absolute;inset:0;background:#000;touch-action:manipulation}
 #cam{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
 #overlay{position:absolute;inset:0;width:100%;height:100%}
+#cam.mirror,#overlay.mirror{transform:scaleX(-1)}
+#vcanvas{position:absolute;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none}
 
-#rail{width:calc(108px + env(safe-area-inset-right,0px));padding:max(14px,env(safe-area-inset-top,0px)) env(safe-area-inset-right,0px) max(14px,env(safe-area-inset-bottom,0px)) 0;display:flex;flex-direction:column;align-items:center;justify-content:space-between;gap:12px;background:var(--bg);border-left:1px solid var(--line)}
-.timer{font-family:var(--display);font-weight:600;font-size:22px;letter-spacing:.04em;font-variant-numeric:tabular-nums;color:var(--muted)}
-.timer.on{color:var(--rec)}
-#recBtn{width:74px;height:74px;border-radius:50%;border:4px solid var(--fg);display:grid;place-items:center}
-#recBtn span{width:54px;height:54px;border-radius:50%;background:var(--rec);transition:all .2s ease}
-#recBtn.on span{width:28px;height:28px;border-radius:6px}
+/* controles flutuando sobre a imagem, como num visor de câmera */
+.pill{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 12px;border-radius:9px;background:rgba(10,12,11,.62);border:1px solid rgba(255,255,255,.14);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);font-weight:600;font-size:12.5px;letter-spacing:.01em;white-space:nowrap}
+.pill svg{width:15px;height:15px;stroke:var(--frame);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.pill .dot{width:15px;height:15px;border-radius:50%;background:var(--muted);display:grid;place-items:center}
+.pill .dot::after{content:"";width:6px;height:6px;border-radius:50%;background:#0b0d0c}
+#followBtn.active .dot{background:var(--frame)}
+#followBtn.active[data-state="track"] .dot{background:var(--ok)}
+#followBtn:not(.active){color:var(--muted)}
+.pill:disabled{opacity:.5}
+#topL{position:absolute;top:max(14px,env(safe-area-inset-top,0px));left:max(16px,env(safe-area-inset-left,0px));display:flex;gap:8px;flex-wrap:wrap;max-width:60%}
+#topR{position:absolute;top:max(14px,env(safe-area-inset-top,0px));right:max(16px,env(safe-area-inset-right,0px))}
+#timerPill{font-variant-numeric:tabular-nums;font-size:13.5px}
+#timerPill .rdot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+#timerPill.on .rdot{background:var(--rec);animation:pisca 1s steps(2) infinite}
+@keyframes pisca{50%{opacity:.25}}
+#recBtn{position:absolute;top:50%;right:max(16px,env(safe-area-inset-right,0px));transform:translateY(-50%);width:68px;height:68px;border-radius:50%;border:3px solid rgba(255,255,255,.92);display:grid;place-items:center;background:rgba(0,0,0,.18)}
+#recBtn span{width:52px;height:52px;border-radius:50%;background:var(--rec);transition:all .2s ease}
+#recBtn.on span{width:26px;height:26px;border-radius:6px}
 #recBtn:disabled{opacity:.4}
-.tool{display:flex;flex-direction:column;align-items:center;gap:4px;font-family:var(--display);font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
-.tool i{width:44px;height:44px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;font-style:normal}
-.tool.active{color:var(--frame)}
-.tool.active i{border-color:var(--frame)}
-.tool:disabled{opacity:.35}
-.tool svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-
-#chip{position:absolute;top:max(12px,env(safe-area-inset-top,0px));left:max(12px,env(safe-area-inset-left,0px));display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:var(--panel);font-family:var(--display);font-size:14px;letter-spacing:.06em;text-transform:uppercase}
-#chip b{width:8px;height:8px;border-radius:50%;background:var(--muted)}
-#chip.track b{background:var(--ok)}
-#chip.lost b{background:var(--frame)}
-#formats{position:absolute;bottom:max(12px,env(safe-area-inset-bottom,0px));left:max(12px,env(safe-area-inset-left,0px));display:flex;gap:6px;font-family:var(--display);font-size:13px;letter-spacing:.08em}
-#formats span{padding:4px 9px;border-radius:4px;background:var(--panel);border:1px solid var(--line)}
-#formats span.v{color:var(--frame);border-color:rgba(245,200,75,.5)}
-#hint{position:absolute;bottom:max(12px,env(safe-area-inset-bottom,0px));right:12px;max-width:44%;text-align:right;font-size:12px;color:var(--muted);text-shadow:0 1px 3px #000}
-
-#pip{position:absolute;top:max(12px,env(safe-area-inset-top,0px));right:12px;height:38%;aspect-ratio:9/16;max-width:30%;border:2px solid var(--frame);border-radius:6px;background:#000;overflow:hidden}
-#pip canvas{width:100%;height:100%;display:block;object-fit:cover}
+#res{display:none}
+#toast{position:absolute;left:50%;bottom:max(16px,env(safe-area-inset-bottom,0px));transform:translateX(-50%);max-width:70%;text-align:center;font-size:12.5px;padding:7px 12px;border-radius:9px;background:rgba(10,12,11,.62);transition:opacity .6s}
+#toast.off{opacity:0;pointer-events:none}
 
 /* telas sobrepostas */
 .screen{position:fixed;inset:0;z-index:20;background:var(--bg);display:flex;align-items:center;justify-content:center;padding-block:max(20px,env(safe-area-inset-top,0px)) max(20px,env(safe-area-inset-bottom,0px));padding-left:max(20px,env(safe-area-inset-left,0px));padding-right:max(20px,env(safe-area-inset-right,0px));overflow:auto}
@@ -83,7 +82,12 @@ button:focus-visible{outline:2px solid var(--frame);outline-offset:3px}
 .row{display:flex;gap:10px;flex-wrap:wrap}
 @media (max-width:560px){.outs{grid-template-columns:1fr}.out.v{max-width:220px}}
 
-#rotate{position:fixed;inset:auto 0 0 0;z-index:15;padding:10px max(16px,env(safe-area-inset-left,0px)) max(10px,env(safe-area-inset-bottom,0px));background:var(--frame);color:#1a1606;font-weight:600;text-align:center;font-size:14px}
+#rotate{position:fixed;inset:0;z-index:15;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;padding-block:24px;padding-left:max(24px,env(safe-area-inset-left,0px));padding-right:max(24px,env(safe-area-inset-right,0px));background:var(--bg);text-align:center}
+#rotate .phone{width:64px;height:110px;border:3px solid var(--frame);border-radius:12px;animation:girar 2.2s ease-in-out infinite}
+@keyframes girar{0%,25%{transform:rotate(0)}55%,100%{transform:rotate(-90deg)}}
+#rotate b{font-family:var(--display);font-weight:700;font-size:30px;text-transform:uppercase;letter-spacing:.03em;line-height:1.05}
+#rotate p{margin:0;max-width:300px;color:var(--muted);line-height:1.5}
+#rotate.rec b{color:var(--rec)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -93,17 +97,15 @@ button:focus-visible{outline:2px solid var(--frame);outline-offset:3px}
   <div id="stage">
     <video id="cam" playsinline muted autoplay></video>
     <canvas id="overlay"></canvas>
-    <div id="chip"><b></b><span id="chipTxt">Carregando IA…</span></div>
-    <div id="pip"><canvas id="vcanvas"></canvas></div>
-    <div id="formats"><span>16:9</span><span class="v">9:16</span></div>
-    <div id="hint">Toque numa pessoa para fixar. Toque no vazio para voltar ao automático.</div>
-  </div>
-  <div id="rail">
-    <div class="timer" id="timer">00:00</div>
-    <button class="tool active" id="followBtn" aria-pressed="true"><i><svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="3.2"/><path d="M5.5 20c.8-3.6 3.4-5.6 6.5-5.6s5.7 2 6.5 5.6"/><path d="M3 9V4h5M21 9V4h-5"/></svg></i>Seguir</button>
+    <canvas id="vcanvas"></canvas>
+    <div id="topL">
+      <button class="pill" id="flipBtn" aria-label="Trocar câmera"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.3"/></svg><span id="camTxt">Traseira</span></button>
+      <button class="pill active" id="followBtn" aria-pressed="true"><span class="dot"></span><span id="chipTxt">Carregando IA…</span></button>
+    </div>
+    <div id="topR"><div class="pill" id="timerPill"><span class="rdot"></span><span id="timer">00:00</span></div></div>
     <button id="recBtn" aria-label="Gravar" disabled><span></span></button>
-    <button class="tool" id="flipBtn"><i><svg viewBox="0 0 24 24"><path d="M4 8h12l-3-3M20 16H8l3 3"/></svg></i>Virar</button>
-    <div class="timer" id="res" style="font-size:13px">—</div>
+    <div id="toast">Toque numa pessoa para escolher quem seguir</div>
+    <span id="res"></span>
   </div>
 </div>
 
@@ -138,7 +140,7 @@ button:focus-visible{outline:2px solid var(--frame);outline-offset:3px}
   </div>
 </div>
 
-<div id="rotate" hidden>Deite o celular para gravar em 16:9.</div>
+<div id="rotate" hidden><div class="phone"></div><b id="rotT">Deite o celular</b><p id="rotP">O app grava a cena em 16:9 e tira dela o vertical 9:16. Com o celular em pé não dá para fazer o horizontal.</p></div>
 
 <script type="module">
 const MP = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
@@ -147,7 +149,7 @@ const MODEL = "https://storage.googleapis.com/mediapipe-models/object_detector/e
 const $ = id => document.getElementById(id);
 const video = $("cam"), overlay = $("overlay"), octx = overlay.getContext("2d");
 const vcanvas = $("vcanvas"), vctx = vcanvas.getContext("2d");
-const chip = $("chip"), chipTxt = $("chipTxt");
+const chipTxt = $("chipTxt");
 
 let stream = null, facing = "environment";
 let detector = null, follow = true, locked = false;
@@ -167,10 +169,10 @@ async function loadDetector(){
     setChip("lost","Procurando pessoa");
   }catch(e){
     console.warn(e);
-    setChip("", navigator.onLine ? "Sem IA: vertical fixo no centro" : "Sem internet no 1º uso: vertical no centro");
+    setChip("", navigator.onLine ? "Reframe indisponível" : "Sem internet no 1º uso");
   }
 }
-function setChip(cls, txt){ chip.className = cls; chipTxt.textContent = txt; }
+function setChip(cls, txt){ $("followBtn").dataset.state = cls; chipTxt.textContent = txt; }
 
 function detect(now, cropW){
   let res;
@@ -190,10 +192,10 @@ function detect(now, cropW){
   if(pick){
     lastSeen = now; trackCx = pick.cx; trackBox = pick;
     if(Math.abs(pick.cx - target) > cropW*0.06) target = pick.cx; // zona morta evita tremedeira
-    setChip("track", locked ? "Seguindo a pessoa escolhida" : "Seguindo pessoa");
+    setChip("track", locked ? "Seguindo a escolhida" : "Reframe automático");
   }else{
     trackBox = null;
-    setChip("lost", locked ? "Pessoa escolhida fora do quadro" : "Procurando pessoa");
+    setChip("lost", locked ? "Escolhida fora do quadro" : "Procurando pessoa");
   }
 }
 
@@ -223,6 +225,10 @@ function videoRect(){
   return { s, x:(W - vw*s)/2, y:(H - vh*s)/2, w:vw*s, h:vh*s };
 }
 
+function rr(x,y,w,h,rad){
+  octx.beginPath();
+  if(octx.roundRect) octx.roundRect(x,y,w,h,rad); else octx.rect(x,y,w,h);
+}
 function drawOverlay(vw, vh, cw){
   const dpr = devicePixelRatio || 1, W = overlay.clientWidth, H = overlay.clientHeight;
   if(overlay.width !== Math.round(W*dpr) || overlay.height !== Math.round(H*dpr)){
@@ -231,27 +237,30 @@ function drawOverlay(vw, vh, cw){
   octx.setTransform(dpr,0,0,dpr,0,0);
   octx.clearRect(0,0,W,H);
   const r = videoRect();
-  const fx = r.x + (cx - cw/2)*r.s, fw = cw*r.s;
-  // escurece fora do quadro vertical
-  octx.fillStyle = "rgba(0,0,0,.38)";
-  octx.fillRect(r.x, r.y, fx - r.x, r.h);
-  octx.fillRect(fx + fw, r.y, r.x + r.w - fx - fw, r.h);
-  // cantos do quadro 9:16
-  octx.strokeStyle = "#f5c84b"; octx.lineWidth = 3;
-  const L = Math.min(28, fw*0.2), y1 = r.y + 1.5, y2 = r.y + r.h - 1.5, x1 = fx + 1.5, x2 = fx + fw - 1.5;
+  // guia 16:9: moldura branca fina com terços
+  const m = 6, gx = r.x + m, gy = r.y + m, gw = r.w - 2*m, gh = r.h - 2*m;
+  octx.strokeStyle = "rgba(255,255,255,.55)"; octx.lineWidth = 1;
+  rr(gx, gy, gw, gh, 10); octx.stroke();
+  octx.strokeStyle = "rgba(255,255,255,.16)";
   octx.beginPath();
-  octx.moveTo(x1, y1+L); octx.lineTo(x1, y1); octx.lineTo(x1+L, y1);
-  octx.moveTo(x2-L, y1); octx.lineTo(x2, y1); octx.lineTo(x2, y1+L);
-  octx.moveTo(x1, y2-L); octx.lineTo(x1, y2); octx.lineTo(x1+L, y2);
-  octx.moveTo(x2-L, y2); octx.lineTo(x2, y2); octx.lineTo(x2, y2-L);
+  for(const t of [1/3, 2/3]){
+    octx.moveTo(gx + gw*t, gy); octx.lineTo(gx + gw*t, gy + gh);
+    octx.moveTo(gx, gy + gh*t); octx.lineTo(gx + gw, gy + gh*t);
+  }
   octx.stroke();
-  octx.lineWidth = 1; octx.strokeStyle = "rgba(245,200,75,.45)";
-  octx.strokeRect(fx+.5, r.y+.5, fw-1, r.h-1);
-  // pessoa seguida
-  if(follow && trackBox){
-    octx.strokeStyle = "rgba(95,211,141,.9)"; octx.lineWidth = 2;
-    octx.setLineDash([6,5]);
-    octx.strokeRect(r.x + trackBox.x*r.s, r.y + trackBox.y*r.s, trackBox.w*r.s, trackBox.h*r.s);
+  // quadro 9:16 amarelo que segue a pessoa
+  const fx = r.x + (cx - cw/2)*r.s, fw = cw*r.s;
+  octx.strokeStyle = "#f5c84b"; octx.lineWidth = 2.5;
+  octx.shadowColor = "rgba(0,0,0,.35)"; octx.shadowBlur = 6;
+  rr(fx + 3, r.y + 3, fw - 6, r.h - 6, 9); octx.stroke();
+  octx.shadowBlur = 0;
+  // com mais de uma pessoa, mostra quem pode ser escolhido
+  if(follow && people.length > 1){
+    octx.lineWidth = 1.5; octx.setLineDash([5,5]);
+    for(const p of people){
+      octx.strokeStyle = trackBox && p.cx === trackBox.cx ? "rgba(95,211,141,.9)" : "rgba(255,255,255,.45)";
+      rr(r.x + p.x*r.s, r.y + p.y*r.s, p.w*r.s, p.h*r.s, 6); octx.stroke();
+    }
     octx.setLineDash([]);
   }
 }
@@ -267,6 +276,9 @@ async function openCamera(){
   await video.play().catch(()=>{});
   await new Promise(r => video.videoWidth ? r() : video.addEventListener("loadedmetadata", r, {once:true}));
   cx = target = video.videoWidth/2; trackCx = null; locked = false;
+  $("camTxt").textContent = facing === "user" ? "Frontal" : "Traseira";
+  $("cam").classList.toggle("mirror", facing === "user");
+  overlay.classList.toggle("mirror", facing === "user");
   $("res").textContent = video.videoWidth + "×" + video.videoHeight;
   $("recBtn").disabled = false;
   checkOrientation();
@@ -274,7 +286,13 @@ async function openCamera(){
 
 function checkOrientation(){
   const portrait = innerHeight > innerWidth;
-  $("rotate").hidden = !(portrait && $("intro").hidden && $("results").hidden);
+  const show = portrait && $("intro").hidden && $("results").hidden;
+  $("rotate").hidden = !show;
+  $("rotate").classList.toggle("rec", show && recording);
+  $("rotT").textContent = recording ? "Volte a deitar o celular" : "Deite o celular";
+  $("rotP").textContent = recording
+    ? "A gravação continua. Deite o celular de novo para não estragar o vídeo."
+    : "O app grava a cena em 16:9 e tira dela o vertical 9:16. Com o celular em pé não dá para fazer o horizontal.";
 }
 addEventListener("resize", () => { checkOrientation(); });
 video.addEventListener("resize", () => { $("res").textContent = video.videoWidth + "×" + video.videoHeight; });
@@ -291,6 +309,7 @@ $("startBtn").onclick = async () => {
     await openCamera();
     $("intro").hidden = true; checkOrientation();
     requestAnimationFrame(loop);
+    setTimeout(() => $("toast").classList.add("off"), 5000);
     loadDetector();
   }catch(e){
     msg.className = "small err";
@@ -310,15 +329,16 @@ $("followBtn").onclick = () => {
   follow = !follow; locked = false; trackBox = null;
   $("followBtn").classList.toggle("active", follow);
   $("followBtn").setAttribute("aria-pressed", follow);
-  if(!follow) setChip("", "Vertical fixo no centro");
-  else setChip("lost", detector ? "Procurando pessoa" : "Sem IA: vertical fixo no centro");
+  if(!follow) setChip("", "Reframe desligado");
+  else setChip("lost", detector ? "Procurando pessoa" : "Reframe indisponível");
 };
 
 // toque para escolher quem seguir
 overlay.addEventListener("pointerdown", e => {
   if(!follow || !detector || !video.videoWidth) return;
   const b = overlay.getBoundingClientRect(), r = videoRect();
-  const px = (e.clientX - b.left - r.x)/r.s, py = (e.clientY - b.top - r.y)/r.s;
+  const sx = facing === "user" ? b.right - e.clientX : e.clientX - b.left; // selfie espelhada
+  const px = (sx - r.x)/r.s, py = (e.clientY - b.top - r.y)/r.s;
   const hit = people.find(p => px >= p.x && px <= p.x+p.w && py >= p.y && py <= p.y+p.h);
   if(hit){ locked = true; trackCx = hit.cx; target = hit.cx; lastSeen = performance.now(); }
   else { locked = false; }
@@ -348,8 +368,8 @@ async function startRec(){
   recs = { h: makeRec(hs, 10_000_000), v: makeRec(vs, 6_000_000) };
   recording = true; t0 = Date.now();
   $("recBtn").classList.add("on"); $("recBtn").setAttribute("aria-label","Parar");
-  $("timer").classList.add("on"); $("flipBtn").disabled = true;
-  timerId = setInterval(tick, 250); tick();
+  $("timerPill").classList.add("on"); $("flipBtn").disabled = true;
+  timerId = setInterval(tick, 250); tick(); checkOrientation();
   try{ wakeLock = await navigator.wakeLock?.request("screen"); }catch{}
 }
 function tick(){
@@ -357,9 +377,9 @@ function tick(){
   $("timer").textContent = String(Math.floor(s/60)).padStart(2,"0") + ":" + String(s%60).padStart(2,"0");
 }
 async function stopRec(){
-  recording = false; clearInterval(timerId);
+  recording = false; clearInterval(timerId); checkOrientation();
   $("recBtn").classList.remove("on"); $("recBtn").setAttribute("aria-label","Gravar");
-  $("timer").classList.remove("on"); $("flipBtn").disabled = false;
+  $("timerPill").classList.remove("on"); $("flipBtn").disabled = false;
   try{ wakeLock?.release(); }catch{}
   recs.h.rec.stop(); recs.v.rec.stop();
   const [bh, bv] = await Promise.all([recs.h.done, recs.v.done]);
