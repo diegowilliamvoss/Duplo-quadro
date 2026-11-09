@@ -28,7 +28,11 @@ button:focus-visible{outline:2px solid var(--frame);outline-offset:3px}
 #stage{position:absolute;inset:0;background:#000;touch-action:manipulation}
 #cam{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
 #overlay{position:absolute;inset:0;width:100%;height:100%}
-#cam.mirror,#overlay.mirror{transform:scaleX(-1)}
+#hview{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none}
+#stage.rot #hview{display:block}
+#stage.rot #cam{opacity:0}
+#cam.mirror,#hview.mirror,#overlay.mirror{transform:scaleX(-1)}
+#stage.rot #topL{left:48px}#stage.rot #topR,#stage.rot #recBtn{right:48px}
 #vcanvas{position:absolute;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none}
 
 /* controles flutuando sobre a imagem, como num visor de câmera */
@@ -73,7 +77,7 @@ button:focus-visible{outline:2px solid var(--frame);outline-offset:3px}
 #results h2{margin:0;font-family:var(--display);font-weight:700;font-size:28px;text-transform:uppercase;letter-spacing:.03em}
 .outs{display:grid;grid-template-columns:minmax(0,16fr) minmax(0,5fr);gap:14px;align-items:start}
 .out{display:flex;flex-direction:column;gap:8px;min-width:0}
-.out video{width:100%;background:#000;border-radius:6px;border:1px solid var(--line)}
+.out video{width:auto;max-width:100%;max-height:calc(var(--boxh,100vh) - 190px);min-height:120px;background:#000;border-radius:6px;border:1px solid var(--line)}
 .out.h video{aspect-ratio:16/9}
 .out.v video{aspect-ratio:9/16;border-color:rgba(245,200,75,.5)}
 .out .meta{font-family:var(--display);font-size:14px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
@@ -81,6 +85,11 @@ button:focus-visible{outline:2px solid var(--frame);outline-offset:3px}
 .out.v button{background:var(--frame);color:#1a1606}
 .row{display:flex;gap:10px;flex-wrap:wrap}
 @media (max-width:560px){.outs{grid-template-columns:1fr}.out.v{max-width:220px}}
+#results.rotbox .outs{grid-template-columns:minmax(0,16fr) minmax(0,5fr)}
+#results.rotbox .out.v{max-width:none}
+#results.rotbox .wrap{gap:10px}
+#results.rotbox .tip{display:none}
+#results.rotbox h2{font-size:22px}
 
 #rotate{position:fixed;inset:0;z-index:15;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;padding-block:24px;padding-left:max(24px,env(safe-area-inset-left,0px));padding-right:max(24px,env(safe-area-inset-right,0px));background:var(--bg);text-align:center}
 #rotate .phone{width:64px;height:110px;border:3px solid var(--frame);border-radius:12px;animation:girar 2.2s ease-in-out infinite}
@@ -96,15 +105,17 @@ button:focus-visible{outline:2px solid var(--frame);outline-offset:3px}
 <div id="app">
   <div id="stage">
     <video id="cam" playsinline muted autoplay></video>
+    <canvas id="hview"></canvas>
     <canvas id="overlay"></canvas>
     <canvas id="vcanvas"></canvas>
     <div id="topL">
       <button class="pill" id="flipBtn" aria-label="Trocar câmera"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.3"/></svg><span id="camTxt">Traseira</span></button>
       <button class="pill active" id="followBtn" aria-pressed="true"><span class="dot"></span><span id="chipTxt">Carregando IA…</span></button>
+      <button class="pill" id="rotBtn" hidden aria-label="Inverter imagem"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg>Inverter</button>
     </div>
     <div id="topR"><div class="pill" id="timerPill"><span class="rdot"></span><span id="timer">00:00</span></div></div>
     <button id="recBtn" aria-label="Gravar" disabled><span></span></button>
-    <div id="toast">Toque numa pessoa para escolher quem seguir</div>
+    <div id="toast">Toque numa pessoa para seguir só ela. Toque em outra para trocar.</div>
     <span id="res"></span>
   </div>
 </div>
@@ -134,9 +145,9 @@ button:focus-visible{outline:2px solid var(--frame);outline-offset:3px}
         <button id="saveV">Salvar vertical</button>
       </div>
     </div>
-    <div class="row"><button class="cta" id="saveBoth">Salvar os dois</button><button class="cta ghost" id="againBtn">Gravar outro</button></div>
+    <div class="row"><button class="cta" id="saveBoth">Salvar os dois</button><button class="cta ghost" id="againBtn">Gravar outro</button><button class="cta ghost" id="discardBtn">Descartar</button></div>
     <p class="small err" id="unsaved" hidden></p>
-    <p class="small">No iPhone, "Salvar" abre o menu de compartilhar: escolha "Salvar Vídeo" para mandar para o Fotos. O horizontal guarda a cena inteira, bom para fazer outros cortes depois num editor.</p>
+    <p class="small tip">No iPhone, "Salvar" abre o menu de compartilhar: escolha "Salvar Vídeo" para mandar para o Fotos. O horizontal guarda a cena inteira, bom para fazer outros cortes depois num editor.</p>
   </div>
 </div>
 
@@ -158,6 +169,46 @@ let personDet = null, faceDet = null, detector = null, follow = true, locked = f
 let cx = 0, target = 0, trackCx = null, trackBox = null, lastSeen = 0, people = [], lastFrameT = 0;
 let recording = false, recs = null, t0 = 0, timerId = null, wakeLock = null, audioCtx = null;
 let outputs = {};
+// rotação travada: o iPhone entrega a imagem em pé, então o app gira por conta própria
+const hcanvas = $("hview"), hctx = hcanvas.getContext("2d");
+let rotated = false, rotSign = -1;
+try{ rotSign = +(localStorage.getItem("dq-rot") || -1); }catch{}
+function srcInfo(){
+  return rotated ? { el:hcanvas, w:hcanvas.width, h:hcanvas.height } : { el:video, w:video.videoWidth, h:video.videoHeight };
+}
+function updateMode(){
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if(!vw || !vh) return;
+  rotated = vh > vw;
+  if(rotated && (hcanvas.width !== vh || hcanvas.height !== vw)){ hcanvas.width = vh; hcanvas.height = vw; }
+  layout();
+}
+function placeRotated(el, on){
+  if(on){
+    const W = innerWidth, H = innerHeight;
+    Object.assign(el.style, { position:"fixed", inset:"auto", left:"50%", top:"50%", width:H+"px", height:W+"px",
+      transform:`translate(-50%,-50%) rotate(${-rotSign*90}deg)` });
+  }else{
+    ["position","inset","left","top","width","height","transform"].forEach(k => el.style[k] = "");
+  }
+}
+function layout(){
+  const on = rotated && innerHeight > innerWidth;
+  document.documentElement.style.setProperty("--boxh", (on ? innerWidth : innerHeight) + "px");
+  $("stage").classList.toggle("rot", rotated);
+  placeRotated($("stage"), on);
+  placeRotated($("results"), on);
+  $("results").classList.toggle("rotbox", on);
+  $("rotBtn").hidden = !rotated;
+}
+function drawHorizontal(){
+  if(!rotated) return;
+  const W = hcanvas.width, H = hcanvas.height;
+  hctx.setTransform(1,0,0,1,0,0);
+  if(rotSign < 0){ hctx.translate(0, H); hctx.rotate(-Math.PI/2); }
+  else { hctx.translate(W, 0); hctx.rotate(Math.PI/2); }
+  hctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
+}
 
 /* ---------- IA: detecta pessoa (corpo) e rosto ---------- */
 async function loadDetector(){
@@ -194,22 +245,22 @@ function runDet(det, isFace, scale){
   }catch{ return []; }
 }
 function detectLoop(){
-  const vw = video.videoWidth, vh = video.videoHeight;
+  const S = srcInfo(), vw = S.w, vh = S.h;
   if(follow && vw && vh && video.readyState >= 2){
     const dw = 384, dh = Math.round(dw*vh/vw), scale = vw/dw;
     if(dcanvas.width !== dw || dcanvas.height !== dh){ dcanvas.width = dw; dcanvas.height = dh; }
-    dctx.drawImage(video, 0, 0, dw, dh);
+    dctx.drawImage(S.el, 0, 0, dw, dh);
     // frontal: rosto primeiro; traseira: corpo primeiro. Se não achar, tenta o outro.
     const order = facing === "user" ? [[faceDet,true],[personDet,false]] : [[personDet,false],[faceDet,true]];
     let found = [];
     for(const [det, isFace] of order){ if(det){ found = runDet(det, isFace, scale); if(found.length) break; } }
     pickTarget(found);
   }
-  setTimeout(detectLoop, 110);
+  setTimeout(detectLoop, 80);
 }
 function pickTarget(found){
   people = found;
-  const vw = video.videoWidth;
+  const vw = srcInfo().w;
   let pick = null;
   if(people.length){
     if(locked && trackCx !== null){
@@ -222,18 +273,20 @@ function pickTarget(found){
   if(pick){
     lastSeen = performance.now(); trackCx = pick.cx; trackBox = pick;
     const cw = vcanvas.width || vw*0.32;
-    if(Math.abs(pick.cx - target) > cw*0.04) target = pick.cx; // zona morta pequena evita tremedeira
-    setChip("track", locked ? "Seguindo a escolhida" : "Reframe automático");
+    if(Math.abs(pick.cx - target) > cw*0.03) target = pick.cx; // zona morta pequena evita tremedeira
+    setChip("track", locked ? "Fixado · toque p/ auto" : "Reframe automático");
   }else{
     trackBox = null; // mantém o quadro onde a pessoa foi vista por último
-    setChip("lost", locked ? "Escolhida fora do quadro" : "Procurando pessoa");
+    setChip("lost", locked ? "Fixado · pessoa saiu" : "Procurando pessoa");
   }
 }
 
 /* ---------- vídeo vertical: um quadro por quadro da câmera ---------- */
 function drawVertical(){
-  const vw = video.videoWidth, vh = video.videoHeight;
-  if(!vw || !vh || video.readyState < 2) return;
+  if(!video.videoWidth || video.readyState < 2) return;
+  drawHorizontal();
+  const S = srcInfo(), vw = S.w, vh = S.h;
+  if(!vw || !vh) return;
   let cw = Math.round(vh*9/16/2)*2;
   if(cw > vw) cw = vw;
   if(vcanvas.width !== cw || vcanvas.height !== vh){ vcanvas.width = cw; vcanvas.height = vh; }
@@ -242,10 +295,12 @@ function drawVertical(){
   lastFrameT = now;
   if(!follow) target = vw/2;
   // suavização pelo tempo: segue firme e sem solavanco, mesmo se algum quadro atrasar
-  cx += (target - cx) * (1 - Math.exp(-dt/0.28));
+  // mais ágil: alcança a pessoa rápido; se ela estiver longe, acelera ainda mais
+  const tau = Math.abs(target - cx) > cw*0.5 ? 0.1 : 0.16;
+  cx += (target - cx) * (1 - Math.exp(-dt/tau));
   const half = cw/2;
   cx = Math.min(Math.max(cx, half), vw - half);
-  vctx.drawImage(video, cx-half, 0, cw, vh, 0, 0, cw, vh);
+  vctx.drawImage(S.el, cx-half, 0, cw, vh, 0, 0, cw, vh);
 }
 let rvfcId = null, looping = false;
 function frameLoop(){
@@ -259,14 +314,14 @@ function restartFrameLoop(){ // ao trocar de câmera a fila de quadros recomeça
   rvfcId = video.requestVideoFrameCallback(frameLoop);
 }
 function overlayLoop(){
-  const vw = video.videoWidth, vh = video.videoHeight;
+  const S = srcInfo(), vw = S.w, vh = S.h;
   if(vw && vh) drawOverlay(vw, vh, vcanvas.width || Math.round(vh*9/16));
   requestAnimationFrame(overlayLoop);
 }
 function loop(){ looping = true; frameLoop(); overlayLoop(); }
 
 function videoRect(){
-  const W = overlay.clientWidth, H = overlay.clientHeight, vw = video.videoWidth, vh = video.videoHeight;
+  const S = srcInfo(), W = overlay.clientWidth, H = overlay.clientHeight, vw = S.w, vh = S.h;
   const s = Math.min(W/vw, H/vh);
   return { s, x:(W - vw*s)/2, y:(H - vh*s)/2, w:vw*s, h:vh*s };
 }
@@ -301,10 +356,10 @@ function drawOverlay(vw, vh, cw){
   rr(fx + 3, r.y + 3, fw - 6, r.h - 6, 9); octx.stroke();
   octx.shadowBlur = 0;
   // com mais de uma pessoa, mostra quem pode ser escolhido
-  if(follow && people.length > 1){
+  if(follow && (people.length > 1 || locked)){
     octx.lineWidth = 1.5; octx.setLineDash([5,5]);
     for(const p of people){
-      octx.strokeStyle = trackBox && p.cx === trackBox.cx ? "rgba(95,211,141,.9)" : "rgba(255,255,255,.45)";
+      octx.strokeStyle = locked && trackBox && p.cx === trackBox.cx ? "rgba(95,211,141,.95)" : "rgba(255,255,255,.45)";
       rr(r.x + p.x*r.s, r.y + p.y*r.s, p.w*r.s, p.h*r.s, 6); octx.stroke();
     }
     octx.setLineDash([]);
@@ -321,28 +376,21 @@ async function openCamera(){
   video.srcObject = stream;
   await video.play().catch(()=>{});
   await new Promise(r => video.videoWidth ? r() : video.addEventListener("loadedmetadata", r, {once:true}));
-  cx = target = video.videoWidth/2; trackCx = null; locked = false; lastFrameT = 0;
+  updateMode();
+  cx = target = srcInfo().w/2; trackCx = null; locked = false; lastFrameT = 0;
   restartFrameLoop();
   $("camTxt").textContent = facing === "user" ? "Frontal" : "Traseira";
   $("cam").classList.toggle("mirror", facing === "user");
+  hcanvas.classList.toggle("mirror", facing === "user");
   overlay.classList.toggle("mirror", facing === "user");
   $("res").textContent = video.videoWidth + "×" + video.videoHeight;
   $("recBtn").disabled = false;
   checkOrientation();
 }
 
-function checkOrientation(){
-  const portrait = innerHeight > innerWidth;
-  const show = portrait && $("intro").hidden && $("results").hidden;
-  $("rotate").hidden = !show;
-  $("rotate").classList.toggle("rec", show && recording);
-  $("rotT").textContent = recording ? "Volte a deitar o celular" : "Deite o celular";
-  $("rotP").textContent = recording
-    ? "A gravação continua. Deite o celular de novo para não estragar o vídeo."
-    : "O app grava a cena em 16:9 e tira dela o vertical 9:16. Com o celular em pé não dá para fazer o horizontal.";
-}
+function checkOrientation(){ layout(); }
 addEventListener("resize", () => { checkOrientation(); });
-video.addEventListener("resize", () => { $("res").textContent = video.videoWidth + "×" + video.videoHeight; });
+video.addEventListener("resize", () => { if(!recording) updateMode(); });
 
 $("startBtn").onclick = async () => {
   const msg = $("introMsg");
@@ -372,7 +420,13 @@ $("flipBtn").onclick = async () => {
   try{ await openCamera(); }catch(e){ facing = facing === "environment" ? "user" : "environment"; }
 };
 
+$("rotBtn").onclick = () => {
+  rotSign = -rotSign;
+  try{ localStorage.setItem("dq-rot", rotSign); }catch{}
+  layout();
+};
 $("followBtn").onclick = () => {
+  if(follow && locked){ locked = false; setChip("lost", "Procurando pessoa"); return; } // volta ao automático
   follow = !follow; locked = false; trackBox = null;
   $("followBtn").classList.toggle("active", follow);
   $("followBtn").setAttribute("aria-pressed", follow);
@@ -383,12 +437,15 @@ $("followBtn").onclick = () => {
 // toque para escolher quem seguir
 overlay.addEventListener("pointerdown", e => {
   if(!follow || !detector || !video.videoWidth) return;
-  const b = overlay.getBoundingClientRect(), r = videoRect();
-  const sx = facing === "user" ? b.right - e.clientX : e.clientX - b.left; // selfie espelhada
-  const px = (sx - r.x)/r.s, py = (e.clientY - b.top - r.y)/r.s;
-  const hit = people.find(p => px >= p.x && px <= p.x+p.w && py >= p.y && py <= p.y+p.h);
-  if(hit){ locked = true; trackCx = hit.cx; target = hit.cx; lastSeen = performance.now(); }
-  else { locked = false; }
+  const r = videoRect();
+  // offsetX/Y já vêm nas coordenadas do próprio quadro (vale com imagem girada ou espelhada)
+  const px = (e.offsetX - r.x)/r.s, py = (e.offsetY - r.y)/r.s;
+  const pad = srcInfo().w*0.03;
+  const hits = people.filter(p => px >= p.x-pad && px <= p.x+p.w+pad && py >= p.y-pad && py <= p.y+p.h+pad);
+  if(!hits.length) return; // toque no vazio não muda nada: sai do fixo só pelo botão
+  const hit = hits.reduce((a,p) => Math.abs(p.cx-px) < Math.abs(a.cx-px) ? p : a);
+  locked = true; trackCx = hit.cx; target = hit.cx; lastSeen = performance.now();
+  setChip("track", "Fixado · toque p/ auto");
 });
 
 /* ---------- gravação ---------- */
@@ -425,7 +482,8 @@ function boostedAudio(){
 async function startRec(){
   if(!window.MediaRecorder){ alert("Este navegador não grava vídeo."); return; }
   const audio = boostedAudio();
-  const hs = new MediaStream([...stream.getVideoTracks(), ...audio.map(t => t.clone())]);
+  const hvid = rotated ? hcanvas.captureStream(30).getVideoTracks() : stream.getVideoTracks();
+  const hs = new MediaStream([...hvid, ...audio.map(t => t.clone())]);
   const vtrack = vcanvas.captureStream(30).getVideoTracks();
   const vs = new MediaStream([...vtrack, ...audio.map(t => t.clone())]);
   recs = { h: makeRec(hs, 10_000_000), v: makeRec(vs, 6_000_000) };
@@ -513,9 +571,21 @@ $("againBtn").onclick = () => {
     msg.textContent = (p.length === 2 ? "Os dois vídeos ainda não foram salvos" : (p[0] === "h" ? "O horizontal" : "O vertical") + " ainda não foi salvo") + ". Se gravar outro, ele se perde. Toque em Gravar outro de novo para confirmar.";
     msg.hidden = false; return;
   }
-  $("outH").pause(); $("outV").pause(); $("results").hidden = true; checkOrientation();
+  backToCamera();
+};
+function backToCamera(){
+  $("outH").pause(); $("outV").pause(); $("results").hidden = true;
+  $("discardBtn").textContent = "Descartar";
   $("recBtn").disabled = true;
   openCamera().catch(e => { $("results").hidden = false; $("unsaved").textContent = "Não deu para reabrir a câmera (" + e.name + "). Feche e abra o app."; $("unsaved").hidden = false; });
+}
+let discardArmed = false;
+$("discardBtn").onclick = () => {
+  if(!discardArmed){ discardArmed = true; $("discardBtn").textContent = "Toque de novo para apagar"; setTimeout(() => { discardArmed = false; $("discardBtn").textContent = "Descartar"; }, 4000); return; }
+  discardArmed = false;
+  Object.values(outputs).forEach(o => URL.revokeObjectURL(o.url));
+  outputs = {}; $("outH").removeAttribute("src"); $("outV").removeAttribute("src"); $("unsaved").hidden = true;
+  backToCamera();
 };
 addEventListener("beforeunload", e => { if(pendentes().length){ e.preventDefault(); e.returnValue = ""; } });
 </script>
