@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0b0d0c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Duplo Quadro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
+<style>
+/* Visor de câmera escuro: imagem ocupa a tela, trilho de controles à direita, quadro 9:16 em âmbar sobre a imagem */
+:root{
+  --bg:#0b0d0c; --panel:rgba(14,16,15,.78); --line:rgba(238,241,236,.16);
+  --fg:#eef1ec; --muted:#9aa39c; --frame:#f5c84b; --rec:#ff453a; --ok:#5fd38d;
+  --display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"Barlow",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);overflow:hidden;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+[hidden]{display:none!important}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+button:focus-visible{outline:2px solid var(--frame);outline-offset:3px}
+
+#app{position:fixed;inset:0;display:flex}
+#stage{position:relative;flex:1;min-width:0;background:#000;touch-action:manipulation}
+#cam{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+#overlay{position:absolute;inset:0;width:100%;height:100%}
+
+#rail{width:calc(108px + env(safe-area-inset-right,0px));padding:max(14px,env(safe-area-inset-top,0px)) env(safe-area-inset-right,0px) max(14px,env(safe-area-inset-bottom,0px)) 0;display:flex;flex-direction:column;align-items:center;justify-content:space-between;gap:12px;background:var(--bg);border-left:1px solid var(--line)}
+.timer{font-family:var(--display);font-weight:600;font-size:22px;letter-spacing:.04em;font-variant-numeric:tabular-nums;color:var(--muted)}
+.timer.on{color:var(--rec)}
+#recBtn{width:74px;height:74px;border-radius:50%;border:4px solid var(--fg);display:grid;place-items:center}
+#recBtn span{width:54px;height:54px;border-radius:50%;background:var(--rec);transition:all .2s ease}
+#recBtn.on span{width:28px;height:28px;border-radius:6px}
+#recBtn:disabled{opacity:.4}
+.tool{display:flex;flex-direction:column;align-items:center;gap:4px;font-family:var(--display);font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.tool i{width:44px;height:44px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;font-style:normal}
+.tool.active{color:var(--frame)}
+.tool.active i{border-color:var(--frame)}
+.tool:disabled{opacity:.35}
+.tool svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+#chip{position:absolute;top:max(12px,env(safe-area-inset-top,0px));left:max(12px,env(safe-area-inset-left,0px));display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:var(--panel);font-family:var(--display);font-size:14px;letter-spacing:.06em;text-transform:uppercase}
+#chip b{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+#chip.track b{background:var(--ok)}
+#chip.lost b{background:var(--frame)}
+#formats{position:absolute;bottom:max(12px,env(safe-area-inset-bottom,0px));left:max(12px,env(safe-area-inset-left,0px));display:flex;gap:6px;font-family:var(--display);font-size:13px;letter-spacing:.08em}
+#formats span{padding:4px 9px;border-radius:4px;background:var(--panel);border:1px solid var(--line)}
+#formats span.v{color:var(--frame);border-color:rgba(245,200,75,.5)}
+#hint{position:absolute;bottom:max(12px,env(safe-area-inset-bottom,0px));right:12px;max-width:44%;text-align:right;font-size:12px;color:var(--muted);text-shadow:0 1px 3px #000}
+
+#pip{position:absolute;top:max(12px,env(safe-area-inset-top,0px));right:12px;height:38%;aspect-ratio:9/16;max-width:30%;border:2px solid var(--frame);border-radius:6px;background:#000;overflow:hidden}
+#pip canvas{width:100%;height:100%;display:block;object-fit:cover}
+
+/* telas sobrepostas */
+.screen{position:fixed;inset:0;z-index:20;background:var(--bg);display:flex;align-items:center;justify-content:center;padding-block:max(20px,env(safe-area-inset-top,0px)) max(20px,env(safe-area-inset-bottom,0px));padding-left:max(20px,env(safe-area-inset-left,0px));padding-right:max(20px,env(safe-area-inset-right,0px));overflow:auto}
+.intro{max-width:520px;display:flex;flex-direction:column;gap:18px}
+.brand{font-family:var(--display);font-weight:700;font-size:44px;line-height:1;letter-spacing:.01em;text-transform:uppercase;text-wrap:balance}
+.brand em{font-style:normal;color:var(--frame)}
+.intro p{margin:0;line-height:1.5;color:var(--muted)}
+.frames{display:flex;align-items:flex-end;gap:14px}
+.frames div{border:2px solid var(--fg);border-radius:4px;display:grid;place-items:center;font-family:var(--display);font-size:14px;letter-spacing:.06em}
+.frames .h{width:128px;height:72px}
+.frames .v{width:45px;height:80px;border-color:var(--frame);color:var(--frame)}
+.cta{align-self:flex-start;padding:14px 26px;border-radius:999px;background:var(--frame);color:#1a1606;font-family:var(--display);font-weight:700;font-size:19px;letter-spacing:.06em;text-transform:uppercase}
+.cta.ghost{background:none;color:var(--fg);border:1px solid var(--line)}
+.small{font-size:13px;color:var(--muted)}
+.err{color:var(--rec)}
+
+#results .wrap{width:100%;max-width:980px;display:flex;flex-direction:column;gap:16px}
+#results h2{margin:0;font-family:var(--display);font-weight:700;font-size:28px;text-transform:uppercase;letter-spacing:.03em}
+.outs{display:grid;grid-template-columns:minmax(0,16fr) minmax(0,5fr);gap:14px;align-items:start}
+.out{display:flex;flex-direction:column;gap:8px;min-width:0}
+.out video{width:100%;background:#000;border-radius:6px;border:1px solid var(--line)}
+.out.h video{aspect-ratio:16/9}
+.out.v video{aspect-ratio:9/16;border-color:rgba(245,200,75,.5)}
+.out .meta{font-family:var(--display);font-size:14px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.out button{padding:10px 12px;border-radius:8px;background:var(--fg);color:var(--bg);font-weight:600}
+.out.v button{background:var(--frame);color:#1a1606}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+@media (max-width:560px){.outs{grid-template-columns:1fr}.out.v{max-width:220px}}
+
+#rotate{position:fixed;inset:auto 0 0 0;z-index:15;padding:10px max(16px,env(safe-area-inset-left,0px)) max(10px,env(safe-area-inset-bottom,0px));background:var(--frame);color:#1a1606;font-weight:600;text-align:center;font-size:14px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="stage">
+    <video id="cam" playsinline muted autoplay></video>
+    <canvas id="overlay"></canvas>
+    <div id="chip"><b></b><span id="chipTxt">Carregando IA…</span></div>
+    <div id="pip"><canvas id="vcanvas"></canvas></div>
+    <div id="formats"><span>16:9</span><span class="v">9:16</span></div>
+    <div id="hint">Toque numa pessoa para fixar. Toque no vazio para voltar ao automático.</div>
+  </div>
+  <div id="rail">
+    <div class="timer" id="timer">00:00</div>
+    <button class="tool active" id="followBtn" aria-pressed="true"><i><svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="3.2"/><path d="M5.5 20c.8-3.6 3.4-5.6 6.5-5.6s5.7 2 6.5 5.6"/><path d="M3 9V4h5M21 9V4h-5"/></svg></i>Seguir</button>
+    <button id="recBtn" aria-label="Gravar" disabled><span></span></button>
+    <button class="tool" id="flipBtn"><i><svg viewBox="0 0 24 24"><path d="M4 8h12l-3-3M20 16H8l3 3"/></svg></i>Virar</button>
+    <div class="timer" id="res" style="font-size:13px">—</div>
+  </div>
+</div>
+
+<div class="screen" id="intro">
+  <div class="intro">
+    <div class="frames"><div class="h">16:9</div><div class="v">9:16</div></div>
+    <div class="brand">Grave uma vez,<br><em>saia com dois vídeos</em></div>
+    <p>Filme com o celular deitado. O app grava a cena inteira em 16:9 e, ao mesmo tempo, monta um vídeo vertical 9:16 que acompanha a pessoa sozinho.</p>
+    <button class="cta" id="startBtn">Abrir câmera</button>
+    <p class="small" id="introMsg">Vai pedir acesso à câmera e ao microfone.</p>
+  </div>
+</div>
+
+<div class="screen" id="results" hidden>
+  <div class="wrap">
+    <h2>Seus dois vídeos</h2>
+    <div class="outs">
+      <div class="out h">
+        <video id="outH" controls playsinline></video>
+        <div class="meta" id="metaH">Horizontal 16:9</div>
+        <button id="saveH">Salvar horizontal</button>
+      </div>
+      <div class="out v">
+        <video id="outV" controls playsinline></video>
+        <div class="meta" id="metaV">Vertical 9:16</div>
+        <button id="saveV">Salvar vertical</button>
+      </div>
+    </div>
+    <div class="row"><button class="cta" id="saveBoth">Salvar os dois</button><button class="cta ghost" id="againBtn">Gravar outro</button></div>
+    <p class="small err" id="unsaved" hidden></p>
+    <p class="small">No iPhone, "Salvar" abre o menu de compartilhar: escolha "Salvar Vídeo" para mandar para o Fotos. O horizontal guarda a cena inteira, bom para fazer outros cortes depois num editor.</p>
+  </div>
+</div>
+
+<div id="rotate" hidden>Deite o celular para gravar em 16:9.</div>
+
+<script type="module">
+const MP = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+const MODEL = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite";
+
+const $ = id => document.getElementById(id);
+const video = $("cam"), overlay = $("overlay"), octx = overlay.getContext("2d");
+const vcanvas = $("vcanvas"), vctx = vcanvas.getContext("2d");
+const chip = $("chip"), chipTxt = $("chipTxt");
+
+let stream = null, facing = "environment";
+let detector = null, follow = true, locked = false;
+let cx = 0, target = 0, trackCx = null, trackBox = null, lastSeen = 0, lastDet = 0, people = [];
+let recording = false, recs = null, t0 = 0, timerId = null, wakeLock = null;
+let outputs = {};
+
+/* ---------- IA: detector de pessoas ---------- */
+async function loadDetector(){
+  try{
+    const { FilesetResolver, ObjectDetector } = await import(MP);
+    const vision = await FilesetResolver.forVisionTasks(MP + "/wasm");
+    const opts = d => ({ baseOptions:{ modelAssetPath: MODEL, delegate:d }, runningMode:"VIDEO",
+      scoreThreshold:0.35, maxResults:5, categoryAllowlist:["person"] });
+    try{ detector = await ObjectDetector.createFromOptions(vision, opts("GPU")); }
+    catch{ detector = await ObjectDetector.createFromOptions(vision, opts("CPU")); }
+    setChip("lost","Procurando pessoa");
+  }catch(e){
+    console.warn(e);
+    setChip("","Sem IA: vertical fixo no centro");
+  }
+}
+function setChip(cls, txt){ chip.className = cls; chipTxt.textContent = txt; }
+
+function detect(now, cropW){
+  let res;
+  try{ res = detector.detectForVideo(video, now); }catch{ return; }
+  people = res.detections.map(d => { const b = d.boundingBox;
+    return { x:b.originX, y:b.originY, w:b.width, h:b.height, cx:b.originX + b.width/2 }; });
+  const vw = video.videoWidth;
+  let pick = null;
+  if(people.length){
+    if(locked && trackCx !== null){
+      pick = people.reduce((a,p) => Math.abs(p.cx-trackCx) < Math.abs(a.cx-trackCx) ? p : a);
+      if(Math.abs(pick.cx - trackCx) > vw*0.22) pick = null; // pessoa escolhida sumiu
+    }else{
+      pick = people.reduce((a,p) => p.w*p.h > a.w*a.h ? p : a);
+    }
+  }
+  if(pick){
+    lastSeen = now; trackCx = pick.cx; trackBox = pick;
+    if(Math.abs(pick.cx - target) > cropW*0.06) target = pick.cx; // zona morta evita tremedeira
+    setChip("track", locked ? "Seguindo a pessoa escolhida" : "Seguindo pessoa");
+  }else{
+    trackBox = null;
+    setChip("lost", locked ? "Pessoa escolhida fora do quadro" : "Procurando pessoa");
+  }
+}
+
+/* ---------- laço de desenho ---------- */
+function loop(){
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if(vw && vh && video.readyState >= 2){
+    let cw = Math.round(vh*9/16/2)*2;
+    if(cw > vw) cw = vw;
+    if(vcanvas.width !== cw || vcanvas.height !== vh){ vcanvas.width = cw; vcanvas.height = vh; }
+    if(!cx){ cx = target = vw/2; }
+    const now = performance.now();
+    if(detector && follow && now - lastDet > 90){ lastDet = now; detect(now, cw); }
+    if(!follow || (now - lastSeen > 2500 && !locked)) target = vw/2;
+    cx += (target - cx) * 0.07;
+    const half = cw/2;
+    cx = Math.min(Math.max(cx, half), vw - half);
+    vctx.drawImage(video, cx-half, 0, cw, vh, 0, 0, cw, vh);
+    drawOverlay(vw, vh, cw);
+  }
+  requestAnimationFrame(loop);
+}
+
+function videoRect(){
+  const W = overlay.clientWidth, H = overlay.clientHeight, vw = video.videoWidth, vh = video.videoHeight;
+  const s = Math.min(W/vw, H/vh);
+  return { s, x:(W - vw*s)/2, y:(H - vh*s)/2, w:vw*s, h:vh*s };
+}
+
+function drawOverlay(vw, vh, cw){
+  const dpr = devicePixelRatio || 1, W = overlay.clientWidth, H = overlay.clientHeight;
+  if(overlay.width !== Math.round(W*dpr) || overlay.height !== Math.round(H*dpr)){
+    overlay.width = Math.round(W*dpr); overlay.height = Math.round(H*dpr);
+  }
+  octx.setTransform(dpr,0,0,dpr,0,0);
+  octx.clearRect(0,0,W,H);
+  const r = videoRect();
+  const fx = r.x + (cx - cw/2)*r.s, fw = cw*r.s;
+  // escurece fora do quadro vertical
+  octx.fillStyle = "rgba(0,0,0,.38)";
+  octx.fillRect(r.x, r.y, fx - r.x, r.h);
+  octx.fillRect(fx + fw, r.y, r.x + r.w - fx - fw, r.h);
+  // cantos do quadro 9:16
+  octx.strokeStyle = "#f5c84b"; octx.lineWidth = 3;
+  const L = Math.min(28, fw*0.2), y1 = r.y + 1.5, y2 = r.y + r.h - 1.5, x1 = fx + 1.5, x2 = fx + fw - 1.5;
+  octx.beginPath();
+  octx.moveTo(x1, y1+L); octx.lineTo(x1, y1); octx.lineTo(x1+L, y1);
+  octx.moveTo(x2-L, y1); octx.lineTo(x2, y1); octx.lineTo(x2, y1+L);
+  octx.moveTo(x1, y2-L); octx.lineTo(x1, y2); octx.lineTo(x1+L, y2);
+  octx.moveTo(x2-L, y2); octx.lineTo(x2, y2); octx.lineTo(x2, y2-L);
+  octx.stroke();
+  octx.lineWidth = 1; octx.strokeStyle = "rgba(245,200,75,.45)";
+  octx.strokeRect(fx+.5, r.y+.5, fw-1, r.h-1);
+  // pessoa seguida
+  if(follow && trackBox){
+    octx.strokeStyle = "rgba(95,211,141,.9)"; octx.lineWidth = 2;
+    octx.setLineDash([6,5]);
+    octx.strokeRect(r.x + trackBox.x*r.s, r.y + trackBox.y*r.s, trackBox.w*r.s, trackBox.h*r.s);
+    octx.setLineDash([]);
+  }
+}
+
+/* ---------- câmera ---------- */
+async function openCamera(){
+  if(stream) stream.getTracks().forEach(t => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    video:{ facingMode:facing, width:{ideal:1920}, height:{ideal:1080}, frameRate:{ideal:30} },
+    audio:{ echoCancellation:false, noiseSuppression:true }
+  });
+  video.srcObject = stream;
+  await video.play().catch(()=>{});
+  await new Promise(r => video.videoWidth ? r() : video.addEventListener("loadedmetadata", r, {once:true}));
+  cx = target = video.videoWidth/2; trackCx = null; locked = false;
+  $("res").textContent = video.videoWidth + "×" + video.videoHeight;
+  $("recBtn").disabled = false;
+  checkOrientation();
+}
+
+function checkOrientation(){
+  const portrait = innerHeight > innerWidth;
+  $("rotate").hidden = !(portrait && $("intro").hidden && $("results").hidden);
+}
+addEventListener("resize", () => { checkOrientation(); });
+video.addEventListener("resize", () => { $("res").textContent = video.videoWidth + "×" + video.videoHeight; });
+
+$("startBtn").onclick = async () => {
+  const msg = $("introMsg");
+  if(!navigator.mediaDevices?.getUserMedia){
+    msg.className = "small err";
+    msg.textContent = "Este navegador não liberou a câmera. Abra o app por um endereço https (veja as instruções) no Chrome ou Safari.";
+    return;
+  }
+  msg.textContent = "Abrindo câmera…";
+  try{
+    await openCamera();
+    $("intro").hidden = true; checkOrientation();
+    requestAnimationFrame(loop);
+    loadDetector();
+  }catch(e){
+    msg.className = "small err";
+    msg.textContent = e.name === "NotAllowedError"
+      ? "Acesso à câmera negado. Libere câmera e microfone nas permissões do site e tente de novo."
+      : "Não deu para abrir a câmera (" + e.name + ").";
+  }
+};
+
+$("flipBtn").onclick = async () => {
+  if(recording) return;
+  facing = facing === "environment" ? "user" : "environment";
+  try{ await openCamera(); }catch(e){ facing = facing === "environment" ? "user" : "environment"; }
+};
+
+$("followBtn").onclick = () => {
+  follow = !follow; locked = false; trackBox = null;
+  $("followBtn").classList.toggle("active", follow);
+  $("followBtn").setAttribute("aria-pressed", follow);
+  if(!follow) setChip("", "Vertical fixo no centro");
+  else setChip("lost", detector ? "Procurando pessoa" : "Sem IA: vertical fixo no centro");
+};
+
+// toque para escolher quem seguir
+overlay.addEventListener("pointerdown", e => {
+  if(!follow || !detector || !video.videoWidth) return;
+  const b = overlay.getBoundingClientRect(), r = videoRect();
+  const px = (e.clientX - b.left - r.x)/r.s, py = (e.clientY - b.top - r.y)/r.s;
+  const hit = people.find(p => px >= p.x && px <= p.x+p.w && py >= p.y && py <= p.y+p.h);
+  if(hit){ locked = true; trackCx = hit.cx; target = hit.cx; lastSeen = performance.now(); }
+  else { locked = false; }
+});
+
+/* ---------- gravação ---------- */
+function pickMime(){
+  const list = ["video/mp4;codecs=avc1,mp4a","video/mp4","video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"];
+  return list.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+}
+function makeRec(s, bps){
+  const mimeType = pickMime();
+  const rec = new MediaRecorder(s, mimeType ? { mimeType, videoBitsPerSecond:bps } : { videoBitsPerSecond:bps });
+  const chunks = [];
+  rec.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
+  const done = new Promise(res => rec.onstop = () => res(new Blob(chunks, { type: rec.mimeType || mimeType || "video/webm" })));
+  rec.start(1000);
+  return { rec, done, stream:s };
+}
+
+async function startRec(){
+  if(!window.MediaRecorder){ alert("Este navegador não grava vídeo."); return; }
+  const audio = stream.getAudioTracks();
+  const hs = new MediaStream([...stream.getVideoTracks(), ...audio.map(t => t.clone())]);
+  const vtrack = vcanvas.captureStream(30).getVideoTracks();
+  const vs = new MediaStream([...vtrack, ...audio.map(t => t.clone())]);
+  recs = { h: makeRec(hs, 10_000_000), v: makeRec(vs, 6_000_000) };
+  recording = true; t0 = Date.now();
+  $("recBtn").classList.add("on"); $("recBtn").setAttribute("aria-label","Parar");
+  $("timer").classList.add("on"); $("flipBtn").disabled = true;
+  timerId = setInterval(tick, 250); tick();
+  try{ wakeLock = await navigator.wakeLock?.request("screen"); }catch{}
+}
+function tick(){
+  const s = Math.floor((Date.now()-t0)/1000);
+  $("timer").textContent = String(Math.floor(s/60)).padStart(2,"0") + ":" + String(s%60).padStart(2,"0");
+}
+async function stopRec(){
+  recording = false; clearInterval(timerId);
+  $("recBtn").classList.remove("on"); $("recBtn").setAttribute("aria-label","Gravar");
+  $("timer").classList.remove("on"); $("flipBtn").disabled = false;
+  try{ wakeLock?.release(); }catch{}
+  recs.h.rec.stop(); recs.v.rec.stop();
+  const [bh, bv] = await Promise.all([recs.h.done, recs.v.done]);
+  [recs.h.stream, recs.v.stream].forEach(s => s.getTracks().forEach(t => { if(!stream.getTracks().includes(t)) t.stop(); }));
+  showResults(bh, bv);
+}
+$("recBtn").onclick = () => recording ? stopRec() : startRec();
+
+/* ---------- resultado ---------- */
+function stamp(){ const d = new Date(), p = n => String(n).padStart(2,"0");
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; }
+function mb(b){ return (b.size/1048576).toFixed(1).replace(".",",") + " MB"; }
+
+function showResults(bh, bv){
+  Object.values(outputs).forEach(o => URL.revokeObjectURL(o.url));
+  const ext = bh.type.includes("mp4") ? "mp4" : "webm", st = stamp();
+  outputs = {
+    h:{ blob:bh, url:URL.createObjectURL(bh), name:`horizontal-16x9-${st}.${ext}`, saved:false },
+    v:{ blob:bv, url:URL.createObjectURL(bv), name:`vertical-9x16-${st}.${ext}`, saved:false }
+  };
+  $("unsaved").hidden = true;
+  $("outH").src = outputs.h.url; $("outV").src = outputs.v.url;
+  $("metaH").textContent = `Horizontal 16:9 · ${mb(bh)}`;
+  $("metaV").textContent = `Vertical 9:16 · ${mb(bv)}`;
+  $("saveH").textContent = "Salvar horizontal"; $("saveV").textContent = "Salvar vertical";
+  $("timer").textContent = "00:00";
+  $("results").hidden = false; checkOrientation();
+}
+
+function download(o){
+  const a = document.createElement("a");
+  a.href = o.url; a.download = o.name; document.body.appendChild(a); a.click(); a.remove();
+}
+function markSaved(keys){
+  keys.forEach(k => { outputs[k].saved = true; });
+  $("saveH").textContent = outputs.h.saved ? "Horizontal salvo ✓" : "Salvar horizontal";
+  $("saveV").textContent = outputs.v.saved ? "Vertical salvo ✓" : "Salvar vertical";
+  $("unsaved").hidden = true;
+}
+async function save(keys){
+  const list = keys.map(k => outputs[k]).filter(Boolean); if(!list.length) return;
+  const files = list.map(o => new File([o.blob], o.name, { type:o.blob.type }));
+  if(navigator.canShare?.({ files })){
+    try{ await navigator.share({ files }); markSaved(keys); return; }
+    catch(e){ if(e.name === "AbortError") return; }
+  }
+  if(files.length > 1 && navigator.canShare?.({ files:[files[0]] })){
+    // navegador não aceita dois arquivos juntos: salva um por vez
+    for(const k of keys){ await save([k]); }
+    return;
+  }
+  list.forEach(download); markSaved(keys);
+}
+$("saveH").onclick = () => save(["h"]);
+$("saveV").onclick = () => save(["v"]);
+$("saveBoth").onclick = () => save(["h","v"]);
+function pendentes(){ return ["h","v"].filter(k => outputs[k] && !outputs[k].saved); }
+$("againBtn").onclick = () => {
+  const p = pendentes(), msg = $("unsaved");
+  if(p.length && msg.hidden){
+    msg.textContent = (p.length === 2 ? "Os dois vídeos ainda não foram salvos" : (p[0] === "h" ? "O horizontal" : "O vertical") + " ainda não foi salvo") + ". Se gravar outro, ele se perde. Toque em Gravar outro de novo para confirmar.";
+    msg.hidden = false; return;
+  }
+  $("outH").pause(); $("outV").pause(); $("results").hidden = true; checkOrientation();
+};
+addEventListener("beforeunload", e => { if(pendentes().length){ e.preventDefault(); e.returnValue = ""; } });
+</script>
+</body>
+</html>
