@@ -158,7 +158,7 @@ let outputs = {};
 /* ---------- IA: detector de pessoas ---------- */
 async function loadDetector(){
   try{
-    const { FilesetResolver, ObjectDetector } = await import(MP);
+    const { FilesetResolver, ObjectDetector } = await import(MP + "/vision_bundle.mjs");
     const vision = await FilesetResolver.forVisionTasks(MP + "/wasm");
     const opts = d => ({ baseOptions:{ modelAssetPath: MODEL, delegate:d }, runningMode:"VIDEO",
       scoreThreshold:0.35, maxResults:5, categoryAllowlist:["person"] });
@@ -167,7 +167,7 @@ async function loadDetector(){
     setChip("lost","Procurando pessoa");
   }catch(e){
     console.warn(e);
-    setChip("","Sem IA: vertical fixo no centro");
+    setChip("", navigator.onLine ? "Sem IA: vertical fixo no centro" : "Sem internet no 1º uso: vertical no centro");
   }
 }
 function setChip(cls, txt){ chip.className = cls; chipTxt.textContent = txt; }
@@ -367,6 +367,11 @@ async function stopRec(){
   showResults(bh, bv);
 }
 $("recBtn").onclick = () => recording ? stopRec() : startRec();
+
+/* ---------- modo offline ---------- */
+if("serviceWorker" in navigator && location.protocol === "https:"){
+  navigator.serviceWorker.register("./sw.js").catch(e => console.warn("offline indisponível", e));
+}
 
 /* ---------- resultado ---------- */
 function stamp(){ const d = new Date(), p = n => String(n).padStart(2,"0");
